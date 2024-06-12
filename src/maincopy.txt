@@ -1,0 +1,433 @@
+#include <iostream>
+#include <string>
+#include <cstdlib> //for servers
+
+//ROS
+#include <ros/ros.h>
+#include <sensor_msgs/PointCloud.h>
+#include <sensor_msgs/CompressedImage.h>
+#include <message_filters/subscriber.h>
+#include <message_filters/time_synchronizer.h>
+#include <message_filters/sync_policies/approximate_time.h>
+#include <sensor_msgs/Image.h>
+#include <nav_msgs/Odometry.h>
+#include <nav_msgs/Path.h>
+#include <tf2_ros/transform_listener.h>
+#include <geometry_msgs/TransformStamped.h>
+#include <std_srvs/Trigger.h>  // for servers
+
+//PCL
+#include <pcl/point_types.h> //pt
+#include <pcl/point_cloud.h> //cloud
+#include <pcl/conversions.h> //ros<->pcl
+#include <pcl_conversions/pcl_conversions.h> //ros<->pcl
+#include <pcl/common/transforms.h>
+#include <pcl/filters/voxel_grid.h>
+#include <pcl/io/pcd_io.h>
+
+//Transformation, common
+#include <Eigen/Core>
+#include <eigen3/Eigen/Dense>
+#include <deque>
+#include <queue>
+#include <vector>
+#include <math.h>
+
+//IMAGE
+#include <cv_bridge/cv_bridge.h>
+#include <opencv2/opencv.hpp>
+#include <opencv2/highgui/highgui.hpp>
+
+using namespace std;
+string root_dir = ROOT_DIR;
+
+//for saving all the pcd
+pcl::PointCloud<pcl::PointXYZRGBA>::Ptr pcl_wait_save (new pcl::PointCloud<pcl::PointXYZRGBA>());
+int pcd_save_interval = -1;
+bool pcd_save_en = true;
+int pcd_index =0;
+
+///////////////**Camera extrinsic and intrinsic parameters**///////////
+
+//camera distortion coeffecient
+double k1 = 0;
+double k2 = 0;
+double p1 = 0;
+double p2 = 0;
+
+//camera procjection matrix
+double fx = 0;
+double fy = 0;
+double cx = 0;
+double cy = 0;
+
+// visualize uncolored point cloud yes/no
+int visualize_uncolored = 1;
+float colored_leaf_size = 0.03f;
+float uncolored_leaf_size = 0.1f;
+
+vector<double> extrinsic_matrix_vector;
+Eigen::Matrix4d extrinsic_matrix; 
+
+//queue
+std::queue<cv::Mat> image_queue;
+std::queue<sensor_msgs::PointCloud2ConstPtr> pointcloud_queue;
+std::queue<Eigen::Matrix4d> transformation_matrix_queue;
+
+ros::Publisher pubcolorlaser;
+
+void World_TO_ROBOT(pcl::PointXYZINormal *pi, pcl::PointXYZINormal *po, Eigen::Matrix4d transformation_matrix)
+{
+    Eigen::Vector4d p_world(pi->x,pi->y,pi->z,1.0);
+    Eigen::Vector4d p_body;
+    p_body = transformation_matrix.inverse() * p_world;
+
+    po->x=p_body(0);
+    po->y=p_body(1);
+    po->z=p_body(2);
+
+    po->intensity = pi->intensity;
+    
+}
+
+//extrinsic transformation
+void IMU_TO_CAMERA(pcl::PointXYZINormal *pi, pcl::PointXYZINormal  * po)
+{         
+    Eigen::Vector4d p_body(pi->x, pi->y, pi->z,1);
+    Eigen::Vector4d c_body;
+    c_body = extrinsic_matrix*p_body;
+
+    po->x=c_body(0);
+    po->y=c_body(1);
+    po->z=c_body(2);
+    po->intensity=pi->intensity;
+
+}
+
+void Camera_to_IMU(pcl::PointXYZRGB *pi, pcl::PointXYZRGB *po)
+{
+    Eigen::Matrix4d inverse_extrinsic = extrinsic_matrix.inverse();
+
+    Eigen::Vector4d c_body(pi->x, pi->y, pi->z, 1.0);
+    Eigen::Vector4d b_body;
+    b_body=inverse_extrinsic*c_body;
+
+    po->x=b_body(0);
+    po->y=b_body(1);
+    po->z=b_body(2);
+    po->r=pi->r;
+    po->g=pi->g;
+    po->b=pi->b;
+      
+}
+
+int projection(pcl::PointXYZINormal *pi, cv::Mat image, pcl::PointXYZRGBA *po)
+{   
+
+    po->x=pi->x;
+    po->y=pi->y;
+    po->z=pi->z;
+    
+    
+    //applying distortion matrix
+
+    double dist_x = pi->x;
+    double dist_y = pi->y;
+    double dist_z = pi->z;
+    dist_x= dist_x/dist_z;
+    dist_y= dist_y/dist_z;
+
+    if(dist_z<0 || dist_z > 4)
+    {          
+        // Handle the case where the point is behind the camera
+        po->r = 255;
+        po->g = 255;
+        po->b = 255;
+        po->a = 20;
+        return 0;
+    }
+
+
+    double r_2= dist_x*dist_x + dist_y*dist_y;
+    double vari = 1+k1*r_2 + k2*r_2*r_2;
+    double undist_x = dist_x*(vari)+ 2*p1*dist_x*dist_y+ p2*(r_2+2*dist_x*dist_x);
+    double undist_y = dist_y*(vari)+ p1*(r_2+2*dist_y*dist_y)+ 2*p2*dist_x*dist_y;
+
+    // using camera projection matrix 
+    double x_coord = fx*undist_x + cx;
+    double y_coord = fy*undist_y + cy;
+    
+    int u=static_cast<int>(x_coord);
+    int v=static_cast<int>(y_coord);
+
+    //now interpolating starts
+    double alpha = x_coord-u;
+    double beta  = y_coord-v;
+
+    int u_floor = static_cast<int>(std::floor(x_coord));
+    int v_floor = static_cast<int>(std::floor(y_coord));
+
+    int u_ceil = static_cast<int>(std::ceil(x_coord));
+    int v_ceil = static_cast<int>(std::ceil(y_coord));   
+
+    if (u_floor >= 0 && u_ceil < image.cols && v_floor >= 0 && v_ceil < image.rows)
+    {
+        // Bilinear interpolation
+        cv::Vec3b pixel1 = (1 - alpha) * (1 - beta) * image.at<cv::Vec3b>(v_floor, u_floor);
+        cv::Vec3b pixel2 = alpha * (1 - beta) * image.at<cv::Vec3b>(v_floor, u_ceil);
+        cv::Vec3b pixel3 = (1 - alpha) * beta * image.at<cv::Vec3b>(v_ceil, u_floor);
+        cv::Vec3b pixel4 = alpha * beta * image.at<cv::Vec3b>(v_ceil, u_ceil);
+
+        cv::Vec3b interpolated_pixel = pixel1 + pixel2 + pixel3 + pixel4;
+
+        po->r = static_cast<uint8_t>(interpolated_pixel[2]);
+        po->g = static_cast<uint8_t>(interpolated_pixel[1]);
+        po->b = static_cast<uint8_t>(interpolated_pixel[0]);
+        po->a =255;
+    }
+    else
+    {
+        // Handle the case where the computed 2D coordinates are outside the image bounds 
+        po->r = 255;
+        po->g = 255;
+        po->b = 255;
+        po->a = 20;
+        return 0;
+    }
+
+
+ 
+    return 1;              
+}
+
+
+void publish_colored_cloud(const ros::Publisher & pubcolorlaser)
+{
+    cv::Mat image = image_queue.front();
+    image_queue.pop();
+    
+    pcl::PointCloud<pcl::PointXYZINormal>::Ptr uncolored_cloud(new pcl::PointCloud<pcl::PointXYZINormal>());
+    pcl::fromROSMsg(*pointcloud_queue.front(),*uncolored_cloud);
+    pointcloud_queue.pop();
+    
+    Eigen::Matrix4d transformation_matrix = transformation_matrix_queue.front();
+    transformation_matrix_queue.pop();
+    
+
+    int size = uncolored_cloud->points.size();
+    pcl::PointCloud<pcl::PointXYZINormal>::Ptr tranformed_cloud(new pcl::PointCloud<pcl::PointXYZINormal>(size,1));
+    pcl::PointCloud<pcl::PointXYZINormal>::Ptr colored_cloud(new pcl::PointCloud<pcl::PointXYZINormal>(size,1));
+    pcl::PointCloud<pcl::PointXYZRGBA>::Ptr colorlidarcloud(new pcl::PointCloud<pcl::PointXYZRGBA>());
+    pcl::PointCloud<pcl::PointXYZRGBA>::Ptr uncoloredlidarcloud(new pcl::PointCloud<pcl::PointXYZRGBA>());
+
+
+
+    for(int i=0; i<size; i++)
+    {
+        World_TO_ROBOT(&uncolored_cloud->points[i],&tranformed_cloud->points[i],transformation_matrix);
+        IMU_TO_CAMERA(&tranformed_cloud->points[i],&colored_cloud->points[i]);
+        pcl::PointXYZRGBA colorcloud;
+        if(projection(&colored_cloud->points[i],image,&colorcloud))
+        {   
+            pcl::PointXYZRGBA validPoint;
+            validPoint.x = uncolored_cloud->points[i].x;
+            validPoint.y = uncolored_cloud->points[i].y;
+            validPoint.z = uncolored_cloud->points[i].z;
+            validPoint.r = colorcloud.r;
+            validPoint.g = colorcloud.g;
+            validPoint.b = colorcloud.b;
+
+            colorlidarcloud -> points.push_back(validPoint);
+        }else if(visualize_uncolored){
+            pcl::PointXYZRGBA unvalidPoint;
+            unvalidPoint.x = uncolored_cloud->points[i].x;
+            unvalidPoint.y = uncolored_cloud->points[i].y;
+            unvalidPoint.z = uncolored_cloud->points[i].z;
+            unvalidPoint.r = colorcloud.r;
+            unvalidPoint.g = colorcloud.g;
+            unvalidPoint.b = colorcloud.b;
+            unvalidPoint.a = colorcloud.a;
+
+            uncoloredlidarcloud->points.push_back(unvalidPoint);        
+        }
+    }
+
+
+    //for colored lidar cloud -> voxelize densely
+    pcl::VoxelGrid<pcl::PointXYZRGBA> voxel_filter;
+    voxel_filter.setLeafSize(colored_leaf_size, colored_leaf_size, colored_leaf_size);
+        
+    pcl::PointCloud<pcl::PointXYZRGBA>::Ptr colorlidarcloud_filtered(new pcl::PointCloud<pcl::PointXYZRGBA>());
+    voxel_filter.setInputCloud(colorlidarcloud);
+    voxel_filter.filter(*colorlidarcloud_filtered);
+
+    pcl::PointCloud<pcl::PointXYZRGBA>::Ptr pcl_temp_save_filtered(new pcl::PointCloud<pcl::PointXYZRGBA>());
+    *pcl_temp_save_filtered += *colorlidarcloud_filtered;
+
+    //for not colored lidar cloud -> voxelize sparsely
+    if(visualize_uncolored){
+           
+        pcl::VoxelGrid<pcl::PointXYZRGBA> voxel_filter_uncolored;
+        voxel_filter_uncolored.setLeafSize(uncolored_leaf_size, uncolored_leaf_size, uncolored_leaf_size);
+            
+        pcl::PointCloud<pcl::PointXYZRGBA>::Ptr uncoloredcloud_filtered(new pcl::PointCloud<pcl::PointXYZRGBA>());
+        voxel_filter_uncolored.setInputCloud(uncoloredlidarcloud);
+        voxel_filter_uncolored.filter(*uncoloredcloud_filtered);
+
+        // add!(color + uncolored)
+        *colorlidarcloud_filtered += *uncoloredcloud_filtered;
+        *pcl_temp_save_filtered += *uncoloredcloud_filtered;
+    }
+
+    //publish
+    sensor_msgs::PointCloud2 lasercloudmsg;
+    pcl::toROSMsg(*colorlidarcloud_filtered,lasercloudmsg);
+    //lasercloudmsg.header.stamp = ros::Time().fromSec(/*추가*/);
+    lasercloudmsg.header.frame_id = "camera_init";
+    pubcolorlaser.publish(lasercloudmsg);
+
+    if (pcd_save_en)
+    {
+
+        *pcl_wait_save += *pcl_temp_save_filtered;
+
+        static int scan_wait_num = 0;
+        scan_wait_num ++;
+        if (pcl_wait_save->size() > 0 && pcd_save_interval > 0  && scan_wait_num >= pcd_save_interval)
+        {
+            pcd_index ++;
+            string all_points_dir(string(string(ROOT_DIR) + "PCD/scans_") + to_string(pcd_index) + string(".pcd"));
+            pcl::PCDWriter pcd_writer;
+            cout << "current scan saved to /PCD/" << all_points_dir << endl;
+            pcd_writer.writeBinary(all_points_dir, *pcl_wait_save);
+            pcl_wait_save->clear();
+            scan_wait_num = 0;
+        }
+    }
+
+
+}
+
+void synchronizedCallback(const sensor_msgs::PointCloud2ConstPtr &pointcloud, const sensor_msgs::CompressedImage::ConstPtr& image,const nav_msgs::Odometry::ConstPtr& odom)
+{
+    // position 
+    double pos_x = odom->pose.pose.position.x;
+    double pos_y = odom->pose.pose.position.y;
+    double pos_z = odom->pose.pose.position.z;
+
+    // orientation
+    double ori_x = odom->pose.pose.orientation.x;
+    double ori_y = odom->pose.pose.orientation.y;
+    double ori_z = odom->pose.pose.orientation.z;
+    double ori_w = odom->pose.pose.orientation.w;
+
+    // Eigen R/T transformation
+    Eigen::Quaterniond q(ori_w, ori_x, ori_y, ori_z);
+    Eigen::Matrix3d rotation_matrix = q.toRotationMatrix();
+    Eigen::Matrix4d transformation_matrix = Eigen::Matrix4d::Identity();
+    transformation_matrix.block<3,3>(0,0) = rotation_matrix;
+    transformation_matrix(0,3) = pos_x;
+    transformation_matrix(1,3) = pos_y;
+    transformation_matrix(2,3) = pos_z;
+
+
+
+    try
+    {
+        cv_bridge::CvImagePtr cv_ptr = cv_bridge::toCvCopy(image, sensor_msgs::image_encodings::BGR8);
+        cv::Mat img = cv_ptr->image;
+
+        // 큐에 저장
+        image_queue.push(img);
+        pointcloud_queue.push(pointcloud);
+        transformation_matrix_queue.push(transformation_matrix);
+
+        ROS_DEBUG("Data pushed to queues. Queue sizes: Image = %lu, PointCloud = %lu, Transform = %lu",
+                image_queue.size(), pointcloud_queue.size(), transformation_matrix_queue.size());
+        ROS_DEBUG("Image timestamp: %f", image->header.stamp.toSec());
+        ROS_DEBUG("PointCloud timestamp: %f", pointcloud->header.stamp.toSec());
+        ROS_DEBUG("Odometry timestamp: %f", odom->header.stamp.toSec());
+    }
+    catch (cv_bridge::Exception& e)
+    {
+        ROS_ERROR("cv_bridge exception: %s", e.what());
+        return;
+    }
+
+    publish_colored_cloud(pubcolorlaser);
+
+}
+
+
+
+int main(int argc, char **argv)
+{
+    ros::init(argc, argv, "snu_colorization");
+    ros::NodeHandle nh;
+    ros::Rate rate(5000);
+
+    //parameters
+    nh.param<bool>("pcd_save/pcd_save_en", pcd_save_en, true);
+    nh.param<int>("pcd_save/interval", pcd_save_interval, -1);
+    //camera parameters
+    nh.param<vector<double>>("camera/ic_extrinsic", extrinsic_matrix_vector, vector<double>());
+    nh.param<double>("camera/k1",k1, -0.35866339052162377 );
+    nh.param<double>("camera/k2",k2, 0.14886143788297318 );
+    nh.param<double>("camera/p1",p1, 0.0002815532809810967 );
+    nh.param<double>("camera/p2",p2, 0.00040207936847531234 );
+    nh.param<double>("camera/fx",fx, 731.2592265895066);
+    nh.param<double>("camera/fy",fy, 730.07196860144 );
+    nh.param<double>("camera/cx",cx, 630.2460232287447 );
+    nh.param<double>("camera/cy",cy, 353.5411952863725 );
+    nh.param<int>("camera/visualize_uncolored",visualize_uncolored,1);
+    nh.param<float>("camera/colored_leaf_size",colored_leaf_size,0.03);
+    nh.param<float>("camera/uncolored_leaf_size",uncolored_leaf_size,0.1);
+    
+
+    //extrinsic matrix to eigen matrix!
+
+    if (extrinsic_matrix_vector.size() == 16) 
+    {
+        extrinsic_matrix << extrinsic_matrix_vector[0], extrinsic_matrix_vector[1], extrinsic_matrix_vector[2], extrinsic_matrix_vector[3],
+                                extrinsic_matrix_vector[4], extrinsic_matrix_vector[5], extrinsic_matrix_vector[6], extrinsic_matrix_vector[7],
+                                extrinsic_matrix_vector[8], extrinsic_matrix_vector[9], extrinsic_matrix_vector[10], extrinsic_matrix_vector[11],
+                                extrinsic_matrix_vector[12], extrinsic_matrix_vector[13], extrinsic_matrix_vector[14], extrinsic_matrix_vector[15];
+    } else{
+            ROS_ERROR("Invalid size for extrinsic matrix vector!");
+            // Hanpubcolorlaserdle the error condition here
+    }
+    std::cout<<extrinsic_matrix<<std::endl;
+    
+    
+    pubcolorlaser = nh.advertise<sensor_msgs::PointCloud2>("/colored_cloud",100000);
+    //subscribers
+    message_filters::Subscriber<sensor_msgs::PointCloud2> pointcloud_sub(nh, "/cloud_registered", 1);
+    message_filters::Subscriber<sensor_msgs::CompressedImage> image_sub(nh, "/cam0/compressed", 1);
+    message_filters::Subscriber<nav_msgs::Odometry> odometry_sub(nh,"/Odometry",1);
+
+
+    typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::PointCloud2, sensor_msgs::CompressedImage, nav_msgs::Odometry> MySyncPolicy;
+    message_filters::Synchronizer<MySyncPolicy> sync(MySyncPolicy(10), pointcloud_sub, image_sub, odometry_sub);
+    sync.registerCallback(boost::bind(&synchronizedCallback, _1, _2, _3));
+
+    while(ros::ok()){
+        ros::spinOnce();     
+        ROS_INFO_ONCE("Start!!");
+        rate.sleep();
+    }
+    
+    if (pcl_wait_save->size() > 0 && pcd_save_en)
+    {
+        string file_name = string("scans.pcd");
+        string all_points_dir(string(string(ROOT_DIR) + "PCD/") + file_name);
+        pcl::PCDWriter pcd_writer;
+        ROS_INFO("Current scan is saved to /PCD/%s\n",file_name.c_str());
+        cout << "current scan is saved to /PCD/" << file_name<<endl;
+        pcd_writer.writeBinary(all_points_dir, *pcl_wait_save);
+    }
+
+    
+    
+
+    return 0;
+}

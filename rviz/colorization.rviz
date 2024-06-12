@@ -1,0 +1,8 @@
+# RViz configuration file
+Fixed Frame: "camera_init"
+Displays:
+  - Name: "colorcloud"
+    Type: "rviz/PointCloud"
+    Topic: "/colored_cloud"
+    Alpha: 1.0
+    Color Transformer: "Intensity"
