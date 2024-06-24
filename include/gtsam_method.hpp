@@ -18,10 +18,16 @@
 #include <gtsam/nonlinear/NonlinearFactorGraph.h>
 #include <gtsam/nonlinear/LevenbergMarquardtOptimizer.h>
 #include <gtsam/nonlinear/ISAM2.h>
+#include <gtsam/inference/Symbol.h>
+
 
 #include "frame.hpp"
+#include "loop_closure.hpp"
+#include "lidar.hpp"
 
 gtsam::Pose3 make_gtsam_pose3(frame_pose _oneframe);
+gtsam::Pose3 eig_to_gtsam(Eigen::Matrix4d matrix);
+
 void make_gtsam();
 void isam_update();
 
@@ -31,10 +37,10 @@ extern gtsam::ISAM2 *isam2;
 extern gtsam::Values isam_estimation;
 
 extern std::vector<frame_pose> frames;
-extern std::vector<frame_pose> updated_frames;
+extern std::vector<submap_pose> submap_poses;
 
 extern bool gtsamInit;
-
+extern int odom_size;
 extern gtsam::noiseModel::Diagonal::shared_ptr priorNoise;
 extern gtsam::noiseModel::Diagonal::shared_ptr odometryNoise;
 

@@ -17,6 +17,7 @@ find_package(catkin REQUIRED COMPONENTS
   std_msgs
   std_srvs
   pcl_ros
+  visualization_msgs
   tf
   message_filters
   message_generation
@@ -142,7 +143,7 @@ include_directories(
 
 ## Declare a C++ library
 # add_library(${PROJECT_NAME}
-#   src/${PROJECT_NAME}/SNU_colorization.cpp
+#   src/${PROJECT_NAME}/lio_pgo_colorization.cpp
 # )
 
 ## Add cmake target dependencies of the library
@@ -158,6 +159,8 @@ add_executable(snu_colorization
   src/transformation.cpp
   src/camera.cpp
   src/gtsam_method.cpp
+  src/lidar.cpp
+  src/loop_closure.cpp
 )
 ## Rename C++ executable without prefix
 ## The above recommended prefix causes long target names, the following renames the
@@ -227,7 +230,7 @@ target_link_libraries(snu_colorization
 #############
 
 ## Add gtest based cpp test target and link libraries
-# catkin_add_gtest(${PROJECT_NAME}-test test/test_SNU_colorization.cpp)
+# catkin_add_gtest(${PROJECT_NAME}-test test/test_lio_pgo_colorization.cpp)
 # if(TARGET ${PROJECT_NAME}-test)
 #   target_link_libraries(${PROJECT_NAME}-test ${PROJECT_NAME})
 # endif()

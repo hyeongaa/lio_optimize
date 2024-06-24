@@ -25,24 +25,27 @@ mapping:
                    0, 0, 1]
 
 camera:
-    ic_extrinsic: [-0.000946332,-0.999996,0.00263852,0.07,
-                    0.0270033,-0.00266311,-0.999632,-0.03,
-                    0.999635,-0.000874734,0.0270057,-0.04,
-                    0,0,0,1]
-
-    k1: -0.249679
-    k2: 0.043598
-    p1: -0.000512
-    p2: 0.002681
-    fx: 561.048022 
-    fy: 563.946803
-    cx: 615.783336
-    cy: 357.753539
+    ic_extrinsic: [ 0.00684568, -0.999966, -0.00460303, 0.0213688,
+                    -0.00396343, 0.00457596, -0.999982, -0.0153776,
+                    0.999969, 0.00686379, -0.00393197, -0.0949029,
+                    0.0, 0.0, 0.0, 1.0]
+    k1: -0.337842 
+    k2: 0.111250
+    p1: 0.000128
+    p2: -0.000393
+    fx: 732.068
+    fy: 730.743
+    cx: 607.391
+    cy: 346.292 
 
     visualize_uncolored: 1
-    colored_leaf_size: 0.02
-    uncolored_leaf_size: 0.2
-    
+    colored_leaf_size: 0.01
+    uncolored_leaf_size: 0.05
+    maximum_distance: 2
+
+ceiling_do: true # true: 천장 제거
+
+
 publish:
     path_en:  false
     scan_publish_en:  true       # false: close all the point cloud output

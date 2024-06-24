@@ -3,7 +3,7 @@
 
 	<arg name="rviz" default="true" />
 
-	<rosparam command="load" file="$(find snu_colorization)/config/mid360_cam_155.yaml" />
+	<rosparam command="load" file="$(find snu_colorization)/config/mid360_cam_155_SNU.yaml" />
 
 	<param name="feature_extract_enable" type="bool" value="0"/>
 	<param name="point_filter_num" type="int" value="3"/>

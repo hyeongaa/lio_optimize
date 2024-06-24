@@ -13,6 +13,7 @@
 #include <sensor_msgs/Image.h>
 #include <nav_msgs/Odometry.h>
 #include <nav_msgs/Path.h>
+#include <visualization_msgs/Marker.h>
 #include <tf2_ros/transform_listener.h>
 #include <geometry_msgs/TransformStamped.h>
 #include <std_srvs/Trigger.h>  // for servers
@@ -53,11 +54,15 @@
 #include <gtsam/nonlinear/NonlinearFactorGraph.h>
 #include <gtsam/nonlinear/LevenbergMarquardtOptimizer.h>
 #include <gtsam/nonlinear/ISAM2.h>
+#include <gtsam/inference/Symbol.h>
+
 
 #include "transformation.hpp"
 #include "camera.hpp"
 #include "frame.hpp"
 #include "gtsam_method.hpp"
+#include "lidar.hpp"
+#include "loop_closure.hpp"
 
 using namespace std;
 string root_dir = ROOT_DIR;
@@ -81,12 +86,16 @@ std::queue<sensor_msgs::PointCloud2ConstPtr> pointcloud_queue;
 std::queue<Eigen::Matrix4d> transformation_matrix_queue;
 
 //frames
-std::vector<frame_pose> frames;
-std::vector<frame_pose> updated_frames;
+std::vector<frame_pose> frames; //1_frame={image,odom,pointcloud}
+std::vector<submap_pose> submap_poses;
+std::vector<int> key_submap_index; //key frames index selection
+std::vector<std::pair<int,int>> node_selection; //loop constraint candidates
+std::vector<std::pair<int,int>> loop_closed_pair; //loop constraints index set
 
 ros::Publisher pubcolorlaser;
 ros::Publisher pubodom;
 ros::Publisher pubpath;
+ros::Publisher pubmarker;
 
 //GTSAM
 gtsam::NonlinearFactorGraph pgo_graph;
@@ -100,7 +109,19 @@ gtsam::noiseModel::Diagonal::shared_ptr odometryNoise;
 
 std::mutex pgo_make;
 std::mutex update_pose_mutex;
+std::mutex key_mutex;
+
 int recent_index =0 ;
+
+bool loop_closed = false;
+
+//key subamp
+
+double key_thr;
+double icp_score_thr;
+
+//visualization loop markers
+
 
 void publish_colored_cloud(const ros::Publisher & pubcolorlaser)
 {
@@ -224,12 +245,12 @@ void publish_path(const ros::Publisher &pubodom, const ros::Publisher &pubpath)
         pose_stamped.header.frame_id = "camera_init";
         pose_stamped.header.stamp = ros::Time::now();
 
-        pose_stamped.pose.position.x = p.transformation_matrix(0, 3);
-        pose_stamped.pose.position.y = p.transformation_matrix(1, 3);
-        pose_stamped.pose.position.z = p.transformation_matrix(2, 3);
+        pose_stamped.pose.position.x = p.corrected_matrix(0, 3);
+        pose_stamped.pose.position.y = p.corrected_matrix(1, 3);
+        pose_stamped.pose.position.z = p.corrected_matrix(2, 3);
 
         // Set the orientation from the transformation matrix
-        Eigen::Matrix3d rotation_matrix = p.transformation_matrix.block<3, 3>(0, 0);
+        Eigen::Matrix3d rotation_matrix = p.corrected_matrix.block<3, 3>(0, 0);
         Eigen::Quaterniond quaternion(rotation_matrix);
         pose_stamped.pose.orientation.x = quaternion.x();
         pose_stamped.pose.orientation.y = quaternion.y();
@@ -244,9 +265,9 @@ void publish_path(const ros::Publisher &pubodom, const ros::Publisher &pubpath)
             corrected_odom.header.frame_id = "camera_init";
             corrected_odom.header.stamp = ros::Time::now();
 
-            corrected_odom.pose.pose.position.x = p.transformation_matrix(0, 3);
-            corrected_odom.pose.pose.position.y = p.transformation_matrix(1, 3);
-            corrected_odom.pose.pose.position.z = p.transformation_matrix(2, 3);
+            corrected_odom.pose.pose.position.x = p.corrected_matrix(0, 3);
+            corrected_odom.pose.pose.position.y = p.corrected_matrix(1, 3);
+            corrected_odom.pose.pose.position.z = p.corrected_matrix(2, 3);
 
             corrected_odom.pose.pose.orientation.x = quaternion.x();
             corrected_odom.pose.pose.orientation.y = quaternion.y();
@@ -258,6 +279,50 @@ void publish_path(const ros::Publisher &pubodom, const ros::Publisher &pubpath)
     update_pose_mutex.unlock();
     pubodom.publish(corrected_odom);
     pubpath.publish(corrected_path);
+}
+
+void path_thread()
+{
+    ros::Rate rate(10);
+    while(ros::ok())
+    {
+        rate.sleep();
+        publish_path(pubodom, pubpath);
+    }
+}
+
+void isam_thread()
+{
+    ros::Rate rate(1);
+    while(1)
+    {
+        rate.sleep();
+        isam_update();
+        
+    }
+}
+
+void loop_thread()
+{
+    ros::Rate rate(1.0);
+    while(ros::ok()){
+        rate.sleep();
+        key_mutex.lock();
+        key_select();
+        key_mutex.unlock();
+        loop_closed = perform_LC();
+    }
+}
+
+void loop_vis_thread()
+{
+    ros::Rate rate(1.0);
+    while(ros::ok()){
+        
+        rate.sleep();
+        publish_loop_markers();
+
+    }
 }
 
 void synchronizedCallback(const sensor_msgs::PointCloud2ConstPtr &pointcloud, const sensor_msgs::CompressedImage::ConstPtr& image,const nav_msgs::Odometry::ConstPtr& odom)
@@ -313,12 +378,7 @@ void synchronizedCallback(const sensor_msgs::PointCloud2ConstPtr &pointcloud, co
         return;
     }
     
-
     make_gtsam();
-    isam_update();
-
-
-    //publish_colored_cloud(pubcolorlaser);
 
 }
 
@@ -328,7 +388,7 @@ int main(int argc, char **argv)
 {
     ros::init(argc, argv, "snu_colorization");
     ros::NodeHandle nh;
-    ros::Rate rate(5000);
+    //ros::Rate rate(5000);
 
     //parameters
     nh.param<bool>("pcd_save/pcd_save_en", pcd_save_en, true);
@@ -346,8 +406,8 @@ int main(int argc, char **argv)
     nh.param<int>("camera/visualize_uncolored",visualize_uncolored,1);
     nh.param<float>("camera/colored_leaf_size",colored_leaf_size,0.03);
     nh.param<float>("camera/uncolored_leaf_size",uncolored_leaf_size,0.1);
-    
-
+    nh.param<double>("key_threshold",key_thr, 2.0);
+    nh.param<double>("icp_score_threshold", icp_score_thr, 0.5);
     //extrinsic matrix to eigen matrix!
 
     if (extrinsic_matrix_vector.size() == 16) 
@@ -385,7 +445,7 @@ int main(int argc, char **argv)
     //pubcolorlaser = nh.advertise<sensor_msgs::PointCloud2>("/colored_cloud",100000);
     pubodom = nh.advertise<nav_msgs::Odometry> ("corrected_odom",100000);
     pubpath = nh.advertise<nav_msgs::Path>("corrected_path",100000);
-
+    pubmarker = nh.advertise<visualization_msgs::Marker>("loop_constraint",100000);
     //subscribers
     message_filters::Subscriber<sensor_msgs::PointCloud2> pointcloud_sub(nh, "/cloud_registered", 1);
     message_filters::Subscriber<sensor_msgs::CompressedImage> image_sub(nh, "/cam0/compressed", 1);
@@ -396,13 +456,19 @@ int main(int argc, char **argv)
     message_filters::Synchronizer<MySyncPolicy> sync(MySyncPolicy(10), pointcloud_sub, image_sub, odometry_sub);
     sync.registerCallback(boost::bind(&synchronizedCallback, _1, _2, _3));
 
+
+    std::thread pub_path{path_thread};
+    std::thread isam_updating(isam_thread);
+    std::thread loop_closing(loop_thread);
+    std::thread loop_visualize(loop_vis_thread);
+    ros::spin();
     //ros spin
-    while(ros::ok()){
+    /*while(ros::ok()){
         ros::spinOnce();     
         ROS_INFO_ONCE("Start!!");
         publish_path(pubodom,pubpath);
         rate.sleep();
-    }
+    }*/
     
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

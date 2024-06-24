@@ -1,14 +1,17 @@
-# LIO Opimization node
+# SNU Colorization Node
+
 ## 1. 사용법
-fast_lio에서 topic을 받아온다는 가정하에 다음과 같이 작동합니다.
+fast_lio에서 topic을 받아온다는 가정하에 SNU_colorization은 다음과 같이 작동합니다.
 
      roslaunch snu_colorization colorization.launch
-
+     rosrun lle snu_lle_node
+     rosrun start_stop start_program_client //시작 버튼
+     rosrun start_stop stop_program_client //멈춤 버튼   
 
 
 ## 2. Topic
 
-총 3개의 topic을 받아옵니다.
+SNU_Colorization node는 총 3개의 topic을 받아옵니다.
 
 
 1. fast-lio에서 받아오는 topic list
@@ -16,8 +19,11 @@ fast_lio에서 topic을 받아온다는 가정하에 다음과 같이 작동합�
 - Lidar Point Cloud: "/cloud_registered"
 - Odoemtry: "/Odometry"
 
+2. SNU_LLE(Low Light Enhancement)에서 받아오는 topic
 
+- /cam0/lle/compressed
 
+lle 알고리즘 실행은 5번에서 확인하시면 됩니다.
 
 ## 3. Parameter setting
 
@@ -39,7 +45,27 @@ camera:
 저 셋은 환경에 맞추어 색칠이 잘되는 parameter로 정해주시면 됩니다.
 
 
+## 4. rosservice 사용법
+
+rosservice는 start_stop 에서 확인하실 수 있습니다.
+
+start하는 client는 다음과 같이 실행하시면 됩니다.
+     
+     rosrun start_stop start_program_client
+
+stop하는 client는 다음과 같이 실행하시면 됩니다.
+     
+     rosrun start_stop stop_program_client
 
 
+roslaunch는 꺼지지 않는 상태에서 실행이 가능합니다.
 
+
+## 5. SNU_LLE(Low Light Enhancement)사용법
+
+저조도 개선 알고리즘은 다음과 같이 실행됩니다. sensor에서 사용하는 cam0/compressed를 받아오며, cam0/lle/compressed를 publish합니다.
+
+     rosrun lle snu_lle_node
+
+한번만 실행하시면 됩니다.
 
