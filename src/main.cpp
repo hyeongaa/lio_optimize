@@ -110,30 +110,58 @@ gtsam::noiseModel::Diagonal::shared_ptr odometryNoise;
 std::mutex pgo_make;
 std::mutex update_pose_mutex;
 std::mutex key_mutex;
-
+//loop closing
 int recent_index =0 ;
-
 bool loop_closed = false;
-
-//key subamp
-
 double key_thr;
 double icp_score_thr;
 
-//visualization loop markers
+//pointcloud publsih
+pcl::PointCloud<pcl::PointXYZINormal>::Ptr pointcloud_publish(new pcl::PointCloud<pcl::PointXYZINormal>());
 
+void publish_colored_corrected_cloud(const ros::Publisher &pubcolorlaser)
+{   
+
+    pointcloud_publish->clear();
+
+    for(int i=0; i<recent_index;i++)
+    {
+        frame_pose &p = frames[i];
+        cv::Mat image = p.image;
+        Eigen::Matrix4d not_corrected = p.transformation_matrix;
+        Eigen::Matrix4d corrected = p.corrected_matrix;
+        int size = p.lidar_cloud->points.size();
+
+        //pcl::PointCloud<pcl::PointXYZINormal>::Ptr world_before_cloud(new pcl::PointCloud<pcl::PointXYZINormal>());
+        pcl::PointCloud<pcl::PointXYZINormal>::Ptr robot_frame_cloud(new pcl::PointCloud<pcl::PointXYZINormal>(size,1));
+        pcl::PointCloud<pcl::PointXYZINormal>::Ptr color_robot_cloud(new pcl::PointCloud<pcl::PointXYZINormal>(size,1));
+        pcl::PointCloud<pcl::PointXYZRGBA>::Ptr color_world_cloud(new pcl::PointCloud<pcl::PointXYZRGBA>());
+
+
+        for(int i=0; i<size;i++)
+        {
+            World_TO_ROBOT(&p.lidar_cloud->points[i], &robot_frame_cloud->points[i],not_corrected);
+            //IMU_TO_CAMERA(&robot_frame_cloud->points[i], &color_robot_cloud->points[i]);
+            ROBOT_TO_WORLD_CORRECTION(&robot_frame_cloud->points[i], &color_robot_cloud->points[i],corrected);
+
+        }
+        
+        *pointcloud_publish += *color_robot_cloud;
+
+    }
+
+    sensor_msgs::PointCloud2 lasermsgs;
+    pcl::toROSMsg(*pointcloud_publish, lasermsgs);
+    lasermsgs.header.frame_id = "camera_init";
+    pubcolorlaser.publish(lasermsgs);
+}
 
 void publish_colored_cloud(const ros::Publisher & pubcolorlaser)
 {
-    cv::Mat image = image_queue.front();
-    image_queue.pop();
-    
+    cv::Mat image = frames.back().image;
     pcl::PointCloud<pcl::PointXYZINormal>::Ptr uncolored_cloud(new pcl::PointCloud<pcl::PointXYZINormal>());
-    pcl::fromROSMsg(*pointcloud_queue.front(),*uncolored_cloud);
-    pointcloud_queue.pop();
-    
-    Eigen::Matrix4d transformation_matrix = transformation_matrix_queue.front();
-    transformation_matrix_queue.pop();
+    *uncolored_cloud = *(frames.back().lidar_cloud);
+    Eigen::Matrix4d transformation_matrix = frames.back().transformation_matrix;
     
 
     int size = uncolored_cloud->points.size();
@@ -325,6 +353,17 @@ void loop_vis_thread()
     }
 }
 
+void vis_points_thread()
+{
+    ros::Rate rate(10);
+    while (ros::ok())
+    {
+        rate.sleep();
+        publish_colored_corrected_cloud(pubcolorlaser);
+    }
+    
+}
+
 void synchronizedCallback(const sensor_msgs::PointCloud2ConstPtr &pointcloud, const sensor_msgs::CompressedImage::ConstPtr& image,const nav_msgs::Odometry::ConstPtr& odom)
 {
     // position 
@@ -379,6 +418,7 @@ void synchronizedCallback(const sensor_msgs::PointCloud2ConstPtr &pointcloud, co
     }
     
     make_gtsam();
+    publish_colored_cloud(pubcolorlaser);
 
 }
 
@@ -446,6 +486,7 @@ int main(int argc, char **argv)
     pubodom = nh.advertise<nav_msgs::Odometry> ("corrected_odom",100000);
     pubpath = nh.advertise<nav_msgs::Path>("corrected_path",100000);
     pubmarker = nh.advertise<visualization_msgs::Marker>("loop_constraint",100000);
+    pubcolorlaser = nh.advertise<sensor_msgs::PointCloud2>("corrected_points",100000);
     //subscribers
     message_filters::Subscriber<sensor_msgs::PointCloud2> pointcloud_sub(nh, "/cloud_registered", 1);
     message_filters::Subscriber<sensor_msgs::CompressedImage> image_sub(nh, "/cam0/compressed", 1);
@@ -461,6 +502,7 @@ int main(int argc, char **argv)
     std::thread isam_updating(isam_thread);
     std::thread loop_closing(loop_thread);
     std::thread loop_visualize(loop_vis_thread);
+    //std::thread pub_point(vis_points_thread);
     ros::spin();
     //ros spin
     /*while(ros::ok()){

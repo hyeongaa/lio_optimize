@@ -80,7 +80,6 @@ void make_key_map_index(int index)
     key_submap_index.push_back(index);
 }
 
-
 void make_lidar_gtsam()
 {
     /*

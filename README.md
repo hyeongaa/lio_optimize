@@ -1,4 +1,4 @@
-# Lio-PGO-Colorization Node (NOT COMPLETED YET)
+# Lio-PGO-Colorization Node
 
 This node is backend process of Lidar SLAM. This node subscribe odometry, pointcloud and images(optinal) from any odometry algorithms(fast-lio, lio-sam, faster-lio...).
 

@@ -35,3 +35,15 @@ void Camera_to_IMU(pcl::PointXYZRGB *pi, pcl::PointXYZRGB *po) {
     po->g = pi->g;
     po->b = pi->b;
 }
+
+void ROBOT_TO_WORLD_CORRECTION(pcl::PointXYZINormal *pi, pcl::PointXYZINormal *po, Eigen::Matrix4d corrected_matrix)
+{
+    Eigen::Vector4d p_body(pi->x, pi->y, pi->z, 1.0);
+    Eigen::Vector4d p_corrected_world = corrected_matrix * p_body;
+
+    po->x = p_corrected_world(0);
+    po->y = p_corrected_world(1);
+    po->z = p_corrected_world(2);
+    po->intensity = pi->intensity;
+
+}

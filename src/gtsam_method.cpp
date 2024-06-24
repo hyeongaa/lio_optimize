@@ -96,6 +96,7 @@ void isam_update()
             isam2->update();
             isam2->update();
             std::cout<<"loop closing update is done"<<std::endl;
+            loop_closed = false;
         }
         //clear for memory..! ISAM will cover it. 
         pgo_graph.resize(0);
