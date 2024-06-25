@@ -80,11 +80,6 @@ float uncolored_leaf_size = 0.1f;
 
 vector<double> extrinsic_matrix_vector;
 
-//queue
-std::queue<cv::Mat> image_queue;
-std::queue<sensor_msgs::PointCloud2ConstPtr> pointcloud_queue;
-std::queue<Eigen::Matrix4d> transformation_matrix_queue;
-
 //frames
 std::vector<frame_pose> frames; //1_frame={image,odom,pointcloud}
 std::vector<submap_pose> submap_poses;
@@ -110,10 +105,12 @@ gtsam::noiseModel::Diagonal::shared_ptr odometryNoise;
 std::mutex pgo_make;
 std::mutex update_pose_mutex;
 std::mutex key_mutex;
+
 //loop closing
 int recent_index =0 ;
 bool loop_closed = false;
 double key_thr;
+double loop_distance_candidate;
 double icp_score_thr;
 
 //pointcloud publsih
@@ -130,22 +127,22 @@ void publish_colored_corrected_cloud(const ros::Publisher &pubcolorlaser)
         cv::Mat image = p.image;
         Eigen::Matrix4d not_corrected = p.transformation_matrix;
         Eigen::Matrix4d corrected = p.corrected_matrix;
-        int size = p.lidar_cloud->points.size();
+        int size = p.robot_frame_cloud->points.size();
 
         //pcl::PointCloud<pcl::PointXYZINormal>::Ptr world_before_cloud(new pcl::PointCloud<pcl::PointXYZINormal>());
-        pcl::PointCloud<pcl::PointXYZINormal>::Ptr robot_frame_cloud(new pcl::PointCloud<pcl::PointXYZINormal>(size,1));
+        //pcl::PointCloud<pcl::PointXYZINormal>::Ptr robot_frame_cloud(new pcl::PointCloud<pcl::PointXYZINormal>(size,1));
         pcl::PointCloud<pcl::PointXYZINormal>::Ptr color_robot_cloud(new pcl::PointCloud<pcl::PointXYZINormal>(size,1));
         pcl::PointCloud<pcl::PointXYZRGBA>::Ptr color_world_cloud(new pcl::PointCloud<pcl::PointXYZRGBA>());
 
-
+        update_pose_mutex.lock();
         for(int i=0; i<size;i++)
         {
-            World_TO_ROBOT(&p.lidar_cloud->points[i], &robot_frame_cloud->points[i],not_corrected);
+            //World_TO_ROBOT(&p.lidar_cloud->points[i], &robot_frame_cloud->points[i],not_corrected);
             //IMU_TO_CAMERA(&robot_frame_cloud->points[i], &color_robot_cloud->points[i]);
-            ROBOT_TO_WORLD_CORRECTION(&robot_frame_cloud->points[i], &color_robot_cloud->points[i],corrected);
+            ROBOT_TO_WORLD_CORRECTION(&p.robot_frame_cloud->points[i], &color_robot_cloud->points[i],corrected);
 
         }
-        
+        update_pose_mutex.unlock();
         *pointcloud_publish += *color_robot_cloud;
 
     }
@@ -175,6 +172,7 @@ void publish_colored_cloud(const ros::Publisher & pubcolorlaser)
     for(int i=0; i<size; i++)
     {
         World_TO_ROBOT(&uncolored_cloud->points[i],&tranformed_cloud->points[i],transformation_matrix);
+        *frames.back().robot_frame_cloud = *tranformed_cloud;
         IMU_TO_CAMERA(&tranformed_cloud->points[i],&colored_cloud->points[i]);
         pcl::PointXYZRGBA colorcloud;
         if(projection(&colored_cloud->points[i],image,&colorcloud))
@@ -335,9 +333,6 @@ void loop_thread()
     ros::Rate rate(1.0);
     while(ros::ok()){
         rate.sleep();
-        key_mutex.lock();
-        key_select();
-        key_mutex.unlock();
         loop_closed = perform_LC();
     }
 }
@@ -355,8 +350,8 @@ void loop_vis_thread()
 
 void vis_points_thread()
 {
-    ros::Rate rate(10);
-    while (ros::ok())
+    ros::Rate rate(0.1);
+    while (1)
     {
         rate.sleep();
         publish_colored_corrected_cloud(pubcolorlaser);
@@ -393,20 +388,24 @@ void synchronizedCallback(const sensor_msgs::PointCloud2ConstPtr &pointcloud, co
         cv_bridge::CvImagePtr cv_ptr = cv_bridge::toCvCopy(image, sensor_msgs::image_encodings::BGR8);
         cv::Mat img = cv_ptr->image;
 
-        // 큐에 저장
-        image_queue.push(img);
-        pointcloud_queue.push(pointcloud);
-        transformation_matrix_queue.push(transformation_matrix);
-
         pcl::PointCloud<pcl::PointXYZINormal>::Ptr pcl_cloud(new pcl::PointCloud<pcl::PointXYZINormal>());
         pcl::fromROSMsg(*pointcloud, *pcl_cloud);
 
         frame_pose current_frame(img,transformation_matrix, pcl_cloud);
-        frames.push_back(current_frame);
         
+        int size = current_frame.lidar_cloud->points.size();
+        pcl::PointCloud<pcl::PointXYZINormal>::Ptr robot_cloud(new pcl::PointCloud<pcl::PointXYZINormal>(size,1));
+        for(int i=0; i<size;i++)
+        {
+            World_TO_ROBOT(&pcl_cloud->points[i], &robot_cloud->points[i], transformation_matrix);
 
-        ROS_DEBUG("Data pushed to queues. Queue sizes: Image = %lu, PointCloud = %lu, Transform = %lu",
-                image_queue.size(), pointcloud_queue.size(), transformation_matrix_queue.size());
+        }
+        voxelize_map(robot_cloud);
+        current_frame.robot_frame_cloud = robot_cloud;
+
+        
+        frames.push_back(current_frame);      
+
         ROS_DEBUG("Image timestamp: %f", image->header.stamp.toSec());
         ROS_DEBUG("PointCloud timestamp: %f", pointcloud->header.stamp.toSec());
         ROS_DEBUG("Odometry timestamp: %f", odom->header.stamp.toSec());
@@ -418,7 +417,7 @@ void synchronizedCallback(const sensor_msgs::PointCloud2ConstPtr &pointcloud, co
     }
     
     make_gtsam();
-    publish_colored_cloud(pubcolorlaser);
+    //publish_colored_cloud(pubcolorlaser);
 
 }
 
@@ -447,6 +446,7 @@ int main(int argc, char **argv)
     nh.param<float>("camera/colored_leaf_size",colored_leaf_size,0.03);
     nh.param<float>("camera/uncolored_leaf_size",uncolored_leaf_size,0.1);
     nh.param<double>("key_threshold",key_thr, 2.0);
+    nh.param<double>("loop_distance_candidate",loop_distance_candidate,4.0);
     nh.param<double>("icp_score_threshold", icp_score_thr, 0.5);
     //extrinsic matrix to eigen matrix!
 
@@ -502,16 +502,9 @@ int main(int argc, char **argv)
     std::thread isam_updating(isam_thread);
     std::thread loop_closing(loop_thread);
     std::thread loop_visualize(loop_vis_thread);
-    //std::thread pub_point(vis_points_thread);
+    std::thread pub_point(vis_points_thread);
     ros::spin();
-    //ros spin
-    /*while(ros::ok()){
-        ros::spinOnce();     
-        ROS_INFO_ONCE("Start!!");
-        publish_path(pubodom,pubpath);
-        rate.sleep();
-    }*/
-    
+ 
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     
@@ -526,7 +519,6 @@ int main(int argc, char **argv)
         pcd_writer.writeBinary(all_points_dir, *pcl_wait_save);
     }
 
-    
     
 
     return 0;

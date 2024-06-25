@@ -54,7 +54,7 @@ void key_select()
 
     int stand_index = size -1;
     int close_index = -1;
-    double distance = 3*key_thr;
+    double distance = loop_distance_candidate;
 
     for(int i =0; i< size-1;i++)
     {

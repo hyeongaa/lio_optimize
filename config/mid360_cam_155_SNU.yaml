@@ -42,8 +42,9 @@ camera:
     colored_leaf_size: 0.02
     uncolored_leaf_size: 0.2
 
-key_threshold: 2.0
-icp_score_threshold: 0.3
+key_threshold: 1.0
+loop_distance_candidate: 3.5
+icp_score_threshold: 0.5
 
 ceiling_do: true # true: 천장 제거
 

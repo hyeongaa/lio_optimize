@@ -59,6 +59,7 @@ void make_gtsam()
         if(keysubmap_check(key_submap_index.back(), curr_node))
         {
             make_key_map_index(curr_node);
+            key_select();
             //std::cout<<"key frame is added in node: "<<curr_node<<std::endl;
         }
         key_mutex.unlock();
@@ -87,7 +88,6 @@ void isam_update()
         isam2->update(pgo_graph,initialEstimate);
         isam2->update();
         isam2->update();
-        //std::cout<<"isam update is done"<<std::endl;
         
         //LOOP CLOSURE
         if(loop_closed)

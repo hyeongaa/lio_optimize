@@ -60,6 +60,7 @@
 Eigen::Matrix4d performICP(const pcl::PointCloud<pcl::PointXYZINormal>::Ptr& source_cloud, const pcl::PointCloud<pcl::PointXYZINormal>::Ptr& target_cloud, bool& icp_success );
 pcl::PointCloud<pcl::PointXYZINormal>::Ptr make_cloud_submap(int index, int submap_size);
 void voxelize_pcd(const pcl::PointCloud<pcl::PointXYZINormal>::Ptr& cloud);
+void voxelize_map(const pcl::PointCloud<pcl::PointXYZINormal>::Ptr& cloud);
 bool keysubmap_check(int prev, int curr);
 void make_key_map_index(int index);
 void make_lidar_gtsam();

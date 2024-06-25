@@ -68,6 +68,6 @@ extern std::vector<std::pair<int,int>> node_selection;
 extern std::mutex key_mutex;
 extern ros::Publisher pubmarker;
 extern std::vector<std::pair<int,int>> loop_closed_pair;
-
+extern double loop_distance_candidate;
 extern bool loop_closed;
 #endif

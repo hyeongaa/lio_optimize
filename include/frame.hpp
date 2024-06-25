@@ -12,6 +12,7 @@ struct frame_pose {
     Eigen::Matrix4d corrected_matrix;
     pcl::PointCloud<pcl::PointXYZRGBA>::Ptr  colored_cloud;
     pcl::PointCloud<pcl::PointXYZINormal>::Ptr lidar_cloud;
+    pcl::PointCloud<pcl::PointXYZINormal>::Ptr robot_frame_cloud;
 
     frame_pose(const cv::Mat& img, const Eigen::Matrix4d& tf_matrix, const pcl::PointCloud<pcl::PointXYZINormal>::Ptr& pc)
         : image(img), transformation_matrix(tf_matrix), lidar_cloud(pc) {}

@@ -70,6 +70,20 @@ void voxelize_pcd(const pcl::PointCloud<pcl::PointXYZINormal>::Ptr& cloud)
     return;
 }
 
+void voxelize_map(const pcl::PointCloud<pcl::PointXYZINormal>::Ptr& cloud)
+{
+    pcl::VoxelGrid<pcl::PointXYZINormal> voxel_pcd;
+    voxel_pcd.setLeafSize(0.5,0.5,0.5);
+    pcl::PointCloud<pcl::PointXYZINormal>::Ptr before_cloud(new pcl::PointCloud<pcl::PointXYZINormal>());
+    *before_cloud = *cloud;
+
+    voxel_pcd.setInputCloud(before_cloud);
+    voxel_pcd.filter(*cloud);
+
+    return;
+}
+
+
 bool keysubmap_check(int prev, int curr)
 {
     return key_thr < (frames.at(prev).transformation_matrix.block<3,1>(0,3)-frames.at(curr).transformation_matrix.block<3,1>(0,3)).norm();
