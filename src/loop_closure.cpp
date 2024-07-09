@@ -56,6 +56,17 @@ void key_select()
     int close_index = -1;
     double distance = loop_distance_candidate;
 
+
+    for(int i=0; i<stand_index-1; i++)
+    {
+        double tmp = (frames.at(key_submap_index.at(i)).transformation_matrix.block<3,1>(0,3)-frames.at(key_submap_index.at(stand_index)).transformation_matrix.block<3,1>(0,3)).norm();
+        if(tmp <distance)
+        {
+            distance = tmp;
+            close_index = i;
+        }
+    }
+/*
     for(int i =0; i< size-1;i++)
     {
         double tmp = (frames.at(key_submap_index.at(i)).transformation_matrix.block<3,1>(0,3)-frames.at(key_submap_index.at(stand_index)).transformation_matrix.block<3,1>(0,3)).norm();
@@ -65,7 +76,7 @@ void key_select()
                 close_index = i;
             }
         }
-    }
+    }*/
 
     if(close_index>0)
     {
@@ -88,7 +99,7 @@ bool perform_LC()
         int target = node_selection.back().second;
         key_mutex.unlock();
 
-        pcl::PointCloud<pcl::PointXYZINormal>::Ptr source_cloud = make_cloud_submap(source,10);
+        pcl::PointCloud<pcl::PointXYZINormal>::Ptr source_cloud = make_cloud_submap(source,0);
         pcl::PointCloud<pcl::PointXYZINormal>::Ptr target_cloud = make_cloud_submap(target,10);
 
         voxelize_pcd(source_cloud);
@@ -103,19 +114,39 @@ bool perform_LC()
 
             gtsam::Pose3 pose_from = eig_to_gtsam(relative_pose*frames.at(source).transformation_matrix);
             gtsam::Pose3 pose_to = make_gtsam_pose3(frames.at(target));
+            gtsam::Pose3 relativ_gtsam = pose_from.between(pose_to);
 
             pgo_make.lock();
-            pgo_graph.add(gtsam::BetweenFactor<gtsam::Pose3>(source_key, target_key, pose_from.between(pose_to), odometryNoise));
+            pgo_graph.add(gtsam::BetweenFactor<gtsam::Pose3>(source_key, target_key, relativ_gtsam, loopNoise));
             pgo_make.unlock();
 
             update = true;
+
+            gtsam::Pose3 pose_from_odom = eig_to_gtsam(frames.at(source).corrected_matrix);
+            gtsam::Pose3 pose_to_odom = eig_to_gtsam(frames.at(target).corrected_matrix);
+            gtsam::Pose3 relative_odom = pose_from_odom.between(pose_to_odom); 
+
+            gtsam::Pose3 pose_error = relative_odom.between(relativ_gtsam);
+            gtsam::Vector3 trans_res = pose_error.translation();
+            gtsam::Vector3 rot_res = pose_error.rotation().rpy();
+            gtsam::Vector6 res;
+            res<<trans_res, rot_res;
+            double residual = res.norm();
+
+
+            std::cout<<source_key<<" and "<<target_key<<" result: "<< std::endl;
+            std::cout<<"icp result: "<<relativ_gtsam.translation().x()<<" " <<relativ_gtsam.translation().y()<<" "<<relativ_gtsam.translation().z()<<" "<<relativ_gtsam.rotation().roll()<<" "<<relativ_gtsam.rotation().pitch()<<" "<<relativ_gtsam.rotation().yaw()<<std::endl;
+            std::cout<<"odometry result: "<<relative_odom.translation().x()<<" " <<relative_odom.translation().y()<<" "<<relative_odom.translation().z()<<" "<<relative_odom.rotation().roll()<<" "<<relative_odom.rotation().pitch()<<" "<<relative_odom.rotation().yaw()<<std::endl;
+            std::cout<<"residual: "<<residual<<std::endl;
+            std::cout<<"cauchy weight: "<< cauchyEstimator->weight(residual)<<std::endl;
+            std::cout<<" "<<std::endl;
 
             std::pair<int,int> loop_pair;
             loop_pair.first = source;
             loop_pair.second = target;
             loop_closed_pair.push_back(loop_pair);
 
-            std::cout<< "loop is paired between "<<source<<" and "<<target<<std::endl;
+            //std::cout<< "loop is paired between "<<source<<" and "<<target<<std::endl;
         }
 
         node_selection.pop_back();        

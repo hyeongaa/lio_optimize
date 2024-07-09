@@ -40,7 +40,7 @@ pcl::PointCloud<pcl::PointXYZINormal>::Ptr make_cloud_submap(int index, int subm
 {
     pcl::PointCloud<pcl::PointXYZINormal>::Ptr pointcloud(new pcl::PointCloud<pcl::PointXYZINormal>());
     Eigen::Matrix4d matrix;
-    for(int i=-submap_size; i<submap_size; i++)
+    for(int i=-submap_size; i<=submap_size; i++)
     {
         int curr = index + i;
         if(curr<0 || curr>=odom_size)
@@ -48,11 +48,7 @@ pcl::PointCloud<pcl::PointXYZINormal>::Ptr make_cloud_submap(int index, int subm
         
         *pointcloud += *frames.at(curr).lidar_cloud;
     }
-    //matrix = frames.at(index).transformation_matrix;
 
-    //submap_pose pose(index, pointcloud, matrix);
-    //std::cout<<"submap is created"<<std::endl;
-    //submap_poses.push_back(pose);
 
     return pointcloud;
 }

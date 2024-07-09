@@ -71,6 +71,8 @@ extern std::mutex pgo_make;
 extern std::mutex key_mutex;
 extern gtsam::noiseModel::Diagonal::shared_ptr priorNoise;
 extern gtsam::noiseModel::Diagonal::shared_ptr odometryNoise;
+extern gtsam::noiseModel::Base::shared_ptr loopNoise;
+
 extern double key_thr;
 extern std::vector<int> key_submap_index;
 extern double icp_score_thr;

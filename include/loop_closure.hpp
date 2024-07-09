@@ -70,4 +70,6 @@ extern ros::Publisher pubmarker;
 extern std::vector<std::pair<int,int>> loop_closed_pair;
 extern double loop_distance_candidate;
 extern bool loop_closed;
+extern gtsam::noiseModel::mEstimator::Cauchy::shared_ptr cauchyEstimator;
+
 #endif

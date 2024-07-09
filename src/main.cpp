@@ -26,6 +26,7 @@
 #include <pcl/common/transforms.h>
 #include <pcl/filters/voxel_grid.h>
 #include <pcl/io/pcd_io.h>
+#include <pcl/filters/statistical_outlier_removal.h>
 
 //Transformation, common
 #include <Eigen/Core>
@@ -101,6 +102,7 @@ gtsam::Values isam_estimation;
 
 gtsam::noiseModel::Diagonal::shared_ptr priorNoise;
 gtsam::noiseModel::Diagonal::shared_ptr odometryNoise;
+gtsam::noiseModel::Base::shared_ptr loopNoise;
 
 std::mutex pgo_make;
 std::mutex update_pose_mutex;
@@ -115,6 +117,10 @@ double icp_score_thr;
 
 //pointcloud publsih
 pcl::PointCloud<pcl::PointXYZINormal>::Ptr pointcloud_publish(new pcl::PointCloud<pcl::PointXYZINormal>());
+
+gtsam::noiseModel::mEstimator::Cauchy::shared_ptr cauchyEstimator;
+
+
 
 void publish_colored_corrected_cloud(const ros::Publisher &pubcolorlaser)
 {   
@@ -146,7 +152,7 @@ void publish_colored_corrected_cloud(const ros::Publisher &pubcolorlaser)
         *pointcloud_publish += *color_robot_cloud;
 
     }
-
+    
     sensor_msgs::PointCloud2 lasermsgs;
     pcl::toROSMsg(*pointcloud_publish, lasermsgs);
     lasermsgs.header.frame_id = "camera_init";
@@ -328,6 +334,16 @@ void isam_thread()
     }
 }
 
+void key_thread()
+{
+    ros::Rate rate(1);
+    while(ros::ok())
+    {
+        rate.sleep();
+        key_select();
+    }
+}
+
 void loop_thread()
 {
     ros::Rate rate(1.0);
@@ -390,6 +406,13 @@ void synchronizedCallback(const sensor_msgs::PointCloud2ConstPtr &pointcloud, co
 
         pcl::PointCloud<pcl::PointXYZINormal>::Ptr pcl_cloud(new pcl::PointCloud<pcl::PointXYZINormal>());
         pcl::fromROSMsg(*pointcloud, *pcl_cloud);
+
+        /*pcl::PointCloud<pcl::PointXYZINormal>::Ptr filtered_cloud(new pcl::PointCloud<pcl::PointXYZINormal>());
+        pcl::StatisticalOutlierRemoval<pcl::PointXYZINormal> sor;
+        sor.setInputCloud(pcl_cloud);
+        sor.setMeanK(100);
+        sor.setStddevMulThresh(0.5);
+        sor.filter(*filtered_cloud);*/ //noise remove code
 
         frame_pose current_frame(img,transformation_matrix, pcl_cloud);
         
@@ -479,6 +502,17 @@ int main(int argc, char **argv)
     odometryNoisevector << 1e-6, 1e-6, 1e-6, 1e-4, 1e-4, 1e-4;
     odometryNoise = gtsam::noiseModel::Diagonal::Variances(odometryNoisevector);
 
+    //loop noise setting
+    double noisecov = 0.1;
+    gtsam::Vector loopNoisevector(6);
+    cauchyEstimator = gtsam::noiseModel::mEstimator::Cauchy::Create(1);
+    loopNoisevector << noisecov,noisecov,noisecov,noisecov,noisecov,noisecov;
+    loopNoise = gtsam::noiseModel::Robust::Create(
+        cauchyEstimator,
+        gtsam::noiseModel::Diagonal::Variances(loopNoisevector)
+    );
+    
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     
     //publishers
@@ -500,23 +534,25 @@ int main(int argc, char **argv)
 
     std::thread pub_path{path_thread};
     std::thread isam_updating(isam_thread);
+    std::thread key_node_select(key_thread);
     std::thread loop_closing(loop_thread);
     std::thread loop_visualize(loop_vis_thread);
     std::thread pub_point(vis_points_thread);
+    
     ros::spin();
  
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     
     //pcd save!
-    if (pcl_wait_save->size() > 0 && pcd_save_en)
+    if (pointcloud_publish->size() > 0 && pcd_save_en)
     {
         string file_name = string("scans.pcd");
         string all_points_dir(string(string(ROOT_DIR) + "PCD/") + file_name);
         pcl::PCDWriter pcd_writer;
         ROS_INFO("Current scan is saved to /PCD/%s\n",file_name.c_str());
         cout << "current scan is saved to /PCD/" << file_name<<endl;
-        pcd_writer.writeBinary(all_points_dir, *pcl_wait_save);
+        pcd_writer.writeBinary(all_points_dir, *pointcloud_publish);
     }
 
     
