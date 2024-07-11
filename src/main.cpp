@@ -326,7 +326,7 @@ void path_thread()
 void isam_thread()
 {
     ros::Rate rate(1);
-    while(1)
+    while(ros::ok())
     {
         rate.sleep();
         isam_update();
@@ -355,7 +355,7 @@ void loop_thread()
 
 void loop_vis_thread()
 {
-    ros::Rate rate(1.0);
+    ros::Rate rate(0.1);
     while(ros::ok()){
         
         rate.sleep();
@@ -367,7 +367,7 @@ void loop_vis_thread()
 void vis_points_thread()
 {
     ros::Rate rate(0.1);
-    while (1)
+    while (ros::ok())
     {
         rate.sleep();
         publish_colored_corrected_cloud(pubcolorlaser);
@@ -511,6 +511,7 @@ int main(int argc, char **argv)
         cauchyEstimator,
         gtsam::noiseModel::Diagonal::Variances(loopNoisevector)
     );
+    //loopNoise = gtsam::noiseModel::Diagonal::Variances(loopNoisevector);
     
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
