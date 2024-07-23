@@ -1,6 +1,7 @@
 #include "lidar.hpp"
 #include "gtsam_method.hpp" 
 #include "loop_closure.hpp"
+#include "camera.hpp"
 
 void publish_loop_markers()
 {
@@ -133,6 +134,18 @@ bool perform_LC()
         Eigen::Matrix4d relative_pose = performICP(source_cloud, target_cloud, icp_success);
     
         if(icp_success){
+            //cv::Mat img1 = frames.at(source).image;
+            //cv::Mat img2 = frames.at(target).image;
+            cv::Mat img_matches;
+            Eigen::Matrix4d image_result = image_RT(source,target,img_matches);
+            gtsam::Pose3 image_gtsam = eig_to_gtsam(image_result);
+
+            cv_bridge::CvImage out_msg;
+            out_msg.encoding = sensor_msgs::image_encodings::BGR8;
+            out_msg.image = img_matches;
+            imgmatcher.publish(out_msg.toImageMsg());
+
+
             gtsam::Symbol source_key('o',source);
             gtsam::Symbol target_key('o',target);
 
@@ -161,6 +174,7 @@ bool perform_LC()
             std::cout<<source_key<<" and "<<target_key<<" result: "<< std::endl;
             std::cout<<"icp relative result: "<<relative_icp.translation().x()<<" " <<relative_icp.translation().y()<<" "<<relative_icp.translation().z()<<" "<<relative_icp.rotation().roll()<<" "<<relative_icp.rotation().pitch()<<" "<<relative_icp.rotation().yaw()<<std::endl;
             std::cout<<"odometry rel result: "<<relative_odom.translation().x()<<" " <<relative_odom.translation().y()<<" "<<relative_odom.translation().z()<<" "<<relative_odom.rotation().roll()<<" "<<relative_odom.rotation().pitch()<<" "<<relative_odom.rotation().yaw()<<std::endl;
+            std::cout<<"image relati result: "<<image_gtsam.translation().x()<<" "<<image_gtsam.translation().y()<<" "<<image_gtsam.translation().z()<<" "<<image_gtsam.rotation().roll()<<" "<<image_gtsam.rotation().pitch()<<" "<<image_gtsam.rotation().yaw()<<std::endl;
             std::cout<<"residual: "<<residual<<std::endl;
             std::cout<<"cauchy weight: "<< cauchyEstimator->weight(residual)<<std::endl;
 

@@ -2,12 +2,17 @@
 #define FRAME_HPP
 
 #include <opencv2/opencv.hpp>
+#include <opencv2/features2d.hpp>
+#include <opencv2/calib3d.hpp>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
 #include <Eigen/Core>
 
 struct frame_pose {
     cv::Mat image;
+    cv::Mat orb_descriptors;
+    std::vector<cv::KeyPoint> keypoints;
+
     Eigen::Matrix4d transformation_matrix;
     Eigen::Matrix4d corrected_matrix;
     pcl::PointCloud<pcl::PointXYZRGBA>::Ptr  colored_cloud;

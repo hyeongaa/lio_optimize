@@ -31,6 +31,8 @@ find_package(PCL REQUIRED)
 find_package(OpenCV REQUIRED)
 find_package(cv_bridge REQUIRED)
 find_package(GTSAM REQUIRED QUIET)
+find_package(DBoW2 REQUIRED)
+
 
 
 ## Uncomment this if the package has a setup.py. This macro ensures
@@ -138,6 +140,7 @@ include_directories(
   ${EIGEN3_INCLUDE_DIR}
   ${PCL_INCLUDE_DIRS}
   ${GTSAM_INCLUDE_DIR}
+  ${DBoW2_INCLUDE_DIRS}
 
   include)
 
@@ -180,6 +183,8 @@ target_link_libraries(snu_colorization
    ${PCL_LIBRARIES}
    ${EIGEN3_LIBS}
    gtsam
+   ${DBOW2_LIBRARIES}
+
 
 )
 

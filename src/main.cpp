@@ -57,6 +57,9 @@
 #include <gtsam/nonlinear/ISAM2.h>
 #include <gtsam/inference/Symbol.h>
 
+//DBOW2
+#include <DBoW2/DBoW2.h>
+#include <DBoW2/TemplatedVocabulary.h>
 
 #include "transformation.hpp"
 #include "camera.hpp"
@@ -92,6 +95,7 @@ ros::Publisher pubcolorlaser;
 ros::Publisher pubodom;
 ros::Publisher pubpath;
 ros::Publisher pubmarker;
+ros::Publisher imgmatcher;
 
 //GTSAM
 gtsam::NonlinearFactorGraph pgo_graph;
@@ -119,7 +123,6 @@ double icp_score_thr;
 pcl::PointCloud<pcl::PointXYZINormal>::Ptr pointcloud_publish(new pcl::PointCloud<pcl::PointXYZINormal>());
 
 gtsam::noiseModel::mEstimator::Cauchy::shared_ptr cauchyEstimator;
-
 
 
 void publish_colored_corrected_cloud(const ros::Publisher &pubcolorlaser)
@@ -416,6 +419,8 @@ void synchronizedCallback(const sensor_msgs::PointCloud2ConstPtr &pointcloud, co
 
         frame_pose current_frame(img,transformation_matrix, pcl_cloud);
         
+        extractORBFeatures(img,current_frame.orb_descriptors, current_frame.keypoints);
+
         int size = current_frame.lidar_cloud->points.size();
         pcl::PointCloud<pcl::PointXYZINormal>::Ptr robot_cloud(new pcl::PointCloud<pcl::PointXYZINormal>(size,1));
         for(int i=0; i<size;i++)
@@ -513,6 +518,13 @@ int main(int argc, char **argv)
     );
     //loopNoise = gtsam::noiseModel::Diagonal::Variances(loopNoisevector);
     
+    //DBOW2 Setting
+    const int k_db = 10;
+    const int l_db =6;
+    const DBoW2::WeightingType weight = DBoW2::TF_IDF;
+    const DBoW2::ScoringType scoring = DBoW2::L1_NORM;
+    OrbVocabulary voc(k_db, l_db, weight, scoring);
+    //OrbDatabase db(voc,true,0);
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     
@@ -522,6 +534,8 @@ int main(int argc, char **argv)
     pubpath = nh.advertise<nav_msgs::Path>("corrected_path",100000);
     pubmarker = nh.advertise<visualization_msgs::Marker>("loop_constraint",100000);
     pubcolorlaser = nh.advertise<sensor_msgs::PointCloud2>("corrected_points",100000);
+    imgmatcher = nh.advertise<sensor_msgs::Image>("matched_images",100000);
+
     //subscribers
     message_filters::Subscriber<sensor_msgs::PointCloud2> pointcloud_sub(nh, "/cloud_registered", 1);
     message_filters::Subscriber<sensor_msgs::CompressedImage> image_sub(nh, "/cam0/compressed", 1);

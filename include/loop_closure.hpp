@@ -56,6 +56,8 @@
 #include <gtsam/nonlinear/ISAM2.h>
 
 #include "frame.hpp"
+#include <cv_bridge/cv_bridge.h>
+
 
 void publish_loop_markers();
 
@@ -67,6 +69,8 @@ bool perform_LC();
 extern std::vector<std::pair<int,int>> node_selection;
 extern std::mutex key_mutex;
 extern ros::Publisher pubmarker;
+extern ros::Publisher imgmatcher;
+
 extern std::vector<std::pair<int,int>> loop_closed_pair;
 extern double loop_distance_candidate;
 extern bool loop_closed;
